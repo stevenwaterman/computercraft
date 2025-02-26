@@ -5,14 +5,16 @@
   "main": "main.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tstl"
+    "deploy": "tstl && bash deploy.sh",
+    "watch": "watch 'npm run deploy' ./src"
   },
   "devDependencies": {
-    "typescript": "^5.1.0",
+    "@jackmacwindows/cc-types": "file:types/cc",
+    "@jackmacwindows/craftos-types": "file:types/craftos",
     "@jackmacwindows/lua-types": "^2.13.2",
     "@jackmacwindows/typescript-to-lua": "^1.22.0",
-    "@jackmacwindows/craftos-types": "file:types/craftos",
-    "@jackmacwindows/cc-types": "file:types/cc"
+    "typescript": "^5.1.0",
+    "watch": "^1.0.2"
   },
   "author": "JackMacWindows",
   "license": "MIT"

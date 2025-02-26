@@ -1,0 +1,27 @@
+import * as event from "./event";
+import boner from "./farming/boner";
+import cobblebot from "./digging/cobblebot";
+import jack from "./lumberjack/jack";
+import bob from "./building/bob";
+import sorty from "./goldFarm/sorty";
+import slicer from "./combat/slicer";
+import spinSlice from "./combat/spinSlice";
+
+const actions: Record<string, () => void> = {
+  cobblebot,
+  boner,
+  jack,
+  bob,
+  sorty,
+  slicer,
+  spinSlice,
+};
+
+const label = os.getComputerLabel();
+
+if (label && label in actions) {
+  const action = actions[label];
+  action();
+} else {
+  print("bad label");
+}

@@ -284,7 +284,9 @@ class SpeakerAudioEmptyEvent implements IEvent {
     public static init(args: any[]): IEvent | null {
         if (!(typeof args[0] === "string") || (args[0] as string) != "speaker_audio_empty") return null;
         let ev: SpeakerAudioEmptyEvent;
+        // @ts-ignore
         ev.side = args[1] as string;
+        // @ts-ignore
         return ev;
     }
 }
@@ -296,7 +298,9 @@ class ComputerCommandEvent implements IEvent {
     public static init(args: any[]): IEvent | null {
         if (!(typeof args[0] === "string") || (args[0] as string) != "computer_command") return null;
         let ev: ComputerCommandEvent;
+        // @ts-ignore
         ev.args = args.slice(1);
+        // @ts-ignore
         return ev;
     }
 }
@@ -350,6 +354,7 @@ let eventInitializers: ((args: any[]) => IEvent | null)[] = [
 
 type Constructor<T extends {} = {}> = new (...args: any[]) => T;
 export function pullEventRaw(filter: string | null = null): IEvent | null {
+    // @ts-ignore
     let args = table.pack(...coroutine.yield(filter));
     for (let init of eventInitializers) {
         let ev = init(args);

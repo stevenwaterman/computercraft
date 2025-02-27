@@ -23,8 +23,8 @@ export class Ok<T> {
     return this.value;
   }
 
-  and<X, Y>(other: Result<X>, func: (a: T, b: X) => Y): Result<Y> {
-    return other.map((otherValue) => func(this.value, otherValue));
+  and<X>(other: Result<X>): Result<[T, X]> {
+    return other.map((otherValue) => [this.value, otherValue] as [T, X]);
   }
 }
 
@@ -56,7 +56,7 @@ export class Err {
     return other;
   }
 
-  and(other: Result<any>, func: (a: any, b: any) => any): Err {
+  and(other: Result<any>): Err {
     return this;
   }
 }

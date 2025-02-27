@@ -1,6 +1,9 @@
 import { BotImpl } from "./Bot";
 import * as event from "../event";
 import { Result, err, ok } from "./Result";
+import { BlockName, WorldModel } from "./WorldModel";
+import { Face, ItemName } from "./types";
+import { pretty_print } from "cc.pretty";
 
 type RelativeHeading = 0 | 1 | 2 | 3;
 type MovementLog = {
@@ -10,7 +13,10 @@ type MovementLog = {
 };
 
 export class MovingBot extends BotImpl {
-  private readonly initialLocation: Vector = locate();
+  private readonly initialLocation: Vector = getLocationFromGps();
+  private readonly worldModel: WorldModel = new WorldModel(
+    this.initialLocation
+  );
 
   private _heading: Heading | MovementLog = {
     rotation: 0,
@@ -35,22 +41,14 @@ export class MovingBot extends BotImpl {
     const zDelta = newLocation.z - oldLocation.z;
     let initialHeading: Heading | undefined = undefined;
 
-    if (forward !== 0 && xDelta === forward) {
+    if (forward === xDelta && right === zDelta) {
       initialHeading = "+X";
-    } else if (forward !== 0 && xDelta === -forward) {
-      initialHeading = "-X";
-    } else if (forward !== 0 && zDelta === forward) {
+    } else if (forward === zDelta && right === -xDelta) {
       initialHeading = "+Z";
-    } else if (forward !== 0 && zDelta === -forward) {
-      initialHeading = "-Z";
-    } else if (right !== 0 && xDelta === right) {
-      initialHeading = "-Z";
-    } else if (right !== 0 && xDelta === -right) {
-      initialHeading = "+Z";
-    } else if (right !== 0 && zDelta === right) {
-      initialHeading = "+X";
-    } else if (right !== 0 && zDelta === -right) {
+    } else if (forward === -xDelta && right === -zDelta) {
       initialHeading = "-X";
+    } else if (forward === -zDelta && right === xDelta) {
+      initialHeading = "-Z";
     }
 
     if (initialHeading === undefined) {
@@ -67,33 +65,40 @@ export class MovingBot extends BotImpl {
 
   public get location(): Vector {
     if (this._location === "?") {
-      this._location = locate();
+      this._location = getLocationFromGps();
     }
 
     return this._location;
   }
 
   public moveOnce({
-    direction = "forwards",
+    direction = "front",
   }: {
-    direction?: "forwards" | "backwards" | "up" | "down";
+    direction?: Face | "back";
   } = {}): Result<void> {
-    const beforeLocation = this._location;
+    const beforeLocation = this.location;
 
     if (this.fuel <= 0) {
       return err("Insufficient fuel");
     }
 
-    const [success, reason] = turtle.forward();
+    const [success, reason] = moveFunc[direction]();
 
     if (!success) {
+      if (direction === "back") {
+        this.locationOnFace(direction).ifOk((target) =>
+          this.worldModel.set(target, "?")
+        );
+      } else {
+        this.inspect({ face: direction });
+      }
       return err(reason!);
     }
 
     this.fuel--;
 
     if (typeof this._heading !== "string") {
-      if (direction === "forwards") {
+      if (direction === "front") {
         if (this._heading.rotation === 0) {
           this._heading.forward++;
         } else if (this._heading.rotation === 1) {
@@ -103,7 +108,7 @@ export class MovingBot extends BotImpl {
         } else {
           this._heading.right--;
         }
-      } else if (direction === "backwards") {
+      } else if (direction === "back") {
         if (this._heading.rotation === 0) {
           this._heading.forward--;
         } else if (this._heading.rotation === 1) {
@@ -116,33 +121,222 @@ export class MovingBot extends BotImpl {
       }
     }
 
-    if (beforeLocation !== "?") {
-      if (direction === "up") {
-        this._location = beforeLocation.add(new Vector(0, 1, 0));
-      } else if (direction === "down") {
-        this._location = beforeLocation.add(new Vector(0, -1, 0));
-      } else if (direction === "forwards" && this.heading.ok) {
-        this._location = addHeading(beforeLocation, this.heading.value);
-      } else if (direction === "backwards" && this.heading.ok) {
-        this._location = addHeading(
-          beforeLocation,
-          rotateHeading(this.heading.value, 2)
-        );
-      } else {
-        this._location = "?";
+    if (direction === "up") {
+      this._location = beforeLocation.add(new Vector(0, 1, 0));
+    } else if (direction === "down") {
+      this._location = beforeLocation.add(new Vector(0, -1, 0));
+    } else if (direction === "front" && this.heading.ok) {
+      this._location = addHeading(beforeLocation, this.heading.value);
+    } else if (direction === "back" && this.heading.ok) {
+      this._location = addHeading(
+        beforeLocation,
+        rotateHeading(this.heading.value, 2)
+      );
+    } else {
+      this._location = "?";
+    }
+
+    this.worldModel.clear(beforeLocation);
+    this.worldModel.set(this.location, "computercraft:turtle_normal");
+
+    if (direction !== "back") {
+      this.inspect({ face: "front" });
+    }
+
+    if (direction !== "down") {
+      this.inspect({ face: "up" });
+    }
+
+    if (direction !== "up") {
+      this.inspect({ face: "down" });
+    }
+
+    return ok(undefined);
+  }
+
+  public turn({ amount = 1 }: { amount?: number } = {}): Result<void> {
+    const normalisedAmount = (((amount % 4) + 4) % 4) as RelativeHeading;
+
+    if (normalisedAmount === 0) {
+      return ok(undefined);
+    }
+
+    if (typeof this._heading === "string") {
+      this._heading = rotateHeading(this._heading, normalisedAmount);
+    } else {
+      const newRotation = (this._heading.rotation + normalisedAmount) % 4;
+      this._heading.rotation = newRotation as RelativeHeading;
+    }
+
+    if (normalisedAmount === 1) {
+      const [success, reason] = turtle.turnRight();
+      if (!success) {
+        return err(reason!);
+      }
+      this.inspect();
+
+      return ok(undefined);
+    }
+
+    if (normalisedAmount === 2) {
+      const [success1, reason1] = turtle.turnRight();
+      if (!success1) {
+        return err(reason1!);
+      }
+      this.inspect();
+
+      const [success2, reason2] = turtle.turnRight();
+      if (!success2) {
+        return err(reason2!);
+      }
+      this.inspect();
+
+      return ok(undefined);
+    }
+
+    if (normalisedAmount === 3) {
+      const [success, reason] = turtle.turnLeft();
+      if (!success) {
+        return err(reason!);
+      }
+      this.inspect();
+
+      return ok(undefined);
+    }
+
+    const handledAll: never = normalisedAmount;
+    throw "impossible";
+  }
+
+  public turnToFace(targetHeading: Heading): Result<void> {
+    const heading = this.heading;
+    if (!heading.ok) {
+      return heading;
+    }
+
+    const rotations = rotationsBetween(heading.value, targetHeading);
+    return this.turn({ amount: rotations });
+  }
+
+  public moveMany(...movements: Movement[]): Result<void> {
+    for (const movement of movements) {
+      const [direction, amount]: [Direction, number] =
+        typeof movement === "string" ? [movement, 1] : movement;
+
+      for (let i = 0; i < amount; i++) {
+        if (direction === "+Y") {
+          const result = this.moveOnce({ direction: "up" });
+          if (!result.ok) {
+            return result;
+          }
+        } else if (direction === "-Y") {
+          const result = this.moveOnce({ direction: "down" });
+          if (!result.ok) {
+            return result;
+          }
+        } else {
+          const turnResult = this.turnToFace(direction);
+          if (!turnResult.ok) {
+            return turnResult;
+          }
+
+          const result = this.moveOnce({ direction: "front" });
+          if (!result.ok) {
+            return result;
+          }
+        }
       }
     }
 
     return ok(undefined);
   }
+
+  public dig({ face = "front" }: { face?: Face } = {}) {
+    const result = super.dig({ face });
+
+    result.and(this.locationOnFace(face)).map(([_, dugLocation]) => {
+      this.worldModel.clear(dugLocation);
+    });
+
+    return result;
+  }
+
+  private locationOnFace(face: Face | "back"): Result<Vector> {
+    if (face === "up") {
+      return ok(this.location.add(new Vector(0, 1, 0)));
+    } else if (face === "down") {
+      return ok(this.location.sub(new Vector(0, 1, 0)));
+    } else if (face === "front") {
+      return this.heading.map((heading) => addHeading(this.location, heading));
+    } else if (face === "back") {
+      return this.heading.map((heading) =>
+        addHeading(this.location, rotateHeading(heading, 2))
+      );
+    }
+
+    const handledAll: never = face;
+    throw "impossible";
+  }
+
+  public inspect({ face = "front" }: { face?: Face } = {}): ItemName | "X" {
+    const [isBlock, data] = inspectFunc[face]();
+
+    if (!isBlock) {
+      this.locationOnFace(face).ifOk((location) => {
+        this.worldModel.clear(location);
+      });
+      return "X";
+    }
+
+    const table = data as LuaTable;
+    const name = table.get("name") as ItemName;
+    this.locationOnFace(face).ifOk((location) =>
+      this.worldModel.set(location, name)
+    );
+    return name;
+  }
+
+  public ensureHeading(): Result<void> {
+    if (this.heading.ok) {
+      return ok(undefined);
+    }
+
+    for (let i = 0; i < 4; i++) {
+      const result = this.moveOnce({ direction: "front" });
+      if (result.ok) {
+        this.heading.assert();
+        this.moveOnce({ direction: "back" }).assert();
+        return ok(undefined);
+      }
+
+      this.turn({ amount: 1 });
+    }
+
+    return err("Trapped on all sides");
+  }
 }
 
-function locate() {
+const inspectFunc = {
+  front: turtle.inspect,
+  up: turtle.inspectUp,
+  down: turtle.inspectDown,
+};
+
+const moveFunc = {
+  front: turtle.forward,
+  up: turtle.up,
+  down: turtle.down,
+  back: turtle.back,
+};
+
+function getLocationFromGps(): Vector {
   const [x, y, z] = gps.locate();
   return new Vector(x, y, z);
 }
 
+type Movement = Direction | [Direction, number];
 type Heading = "+X" | "-X" | "+Z" | "-Z";
+type Direction = Heading | "+Y" | "-Y";
 
 function addHeading(location: Vector, heading: Heading): Vector {
   if (heading === "+X") {
@@ -171,4 +365,13 @@ function rotateHeading(heading: Heading, clockwise90: number): Heading {
   const rotated = initial + clockwise90;
   const bounded = ((rotated % 4) + 4) % 4;
   return headings[bounded];
+}
+
+function rotationsBetween(current: Heading, target: Heading): RelativeHeading {
+  const headings: Heading[] = ["-Z", "+X", "+Z", "-X"];
+  const currentRelative = headings.indexOf(current);
+  const targetRelative = headings.indexOf(target);
+  const rotationNeeded = targetRelative - currentRelative;
+  const bounded = ((rotationNeeded % 4) + 4) % 4;
+  return bounded as 0 | 1 | 2 | 3;
 }

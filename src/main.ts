@@ -8,6 +8,8 @@ import slicer from "./combat/slicer";
 import spinSlice from "./combat/spinSlice";
 import forester from "./lumberjack/forester";
 
+import { MovingBot } from "./bots/MovingBot";
+
 const actions: Record<string, () => void> = {
   cobblebot,
   boner,

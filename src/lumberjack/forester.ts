@@ -1,13 +1,10 @@
+import { MovingBot } from "../bots/MovingBot";
 import * as event from "../event";
-import { Inventory, InventoryImpl } from "../bots/inventory/Inventory";
 
 export default function forester() {
-  const inventory: InventoryImpl = new InventoryImpl();
-  // inventory.drop({
-  //   amount: {
-  //     "minecraft:cobblestone_slab": 70,
-  //   },
-  // });
+  const bot = new MovingBot();
 
-  inventory.ensureEquipped("minecraft:diamond_pickaxe").assert();
+  bot.moveOnce();
+  const heading = bot.heading.assert();
+  print(heading)
 }

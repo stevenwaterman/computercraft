@@ -1,6 +1,6 @@
-import * as event from "../../event";
-import { Result, err, ok } from "../Result";
-import { Face, ItemName, SlotIdx, slotIndexes } from "../types";
+import * as event from "../event";
+import { Result, err, ok } from "./Result";
+import { Face, ItemName, SlotIdx, slotIndexes } from "./types";
 
 const suckFunc = {
   front: turtle.suck,
@@ -173,6 +173,33 @@ class InventorySlot {
     return ok(undefined);
   }
 
+  public refuel({
+    amount = "all",
+  }: {
+    amount?: number | "all";
+  } = {}): Result<void> {
+    if (this.empty) {
+      return ok(undefined);
+    }
+
+    this.select();
+    const [success, reason] = turtle.refuel(
+      amount === "all" ? undefined : amount
+    );
+
+    if (!success) {
+      return err(reason!);
+    }
+
+    if (amount === "all" || (this._count !== "?" && this._count <= amount)) {
+      this.count = 0;
+    } else if (this._count !== "?") {
+      this.count -= amount;
+    }
+
+    return ok(undefined);
+  }
+
   public transferTo({
     target,
     amount = "all",
@@ -211,12 +238,12 @@ class InventorySlot {
   }
 
   constructor(
-    private readonly inventory: InventoryImpl,
+    private readonly inventory: BotImpl,
     public readonly idx: SlotIdx
   ) {}
 }
 
-export interface Inventory {
+export interface Bot {
   items: Record<ItemName, number>;
 
   suck({
@@ -236,13 +263,32 @@ export interface Inventory {
     face?: Face;
     amount?: Record<ItemName, number> | "all";
   }): Result<void>;
+
+  refuel({
+    amount = "all",
+  }?: {
+    amount?: Record<ItemName, number> | "all";
+  }): Result<void>;
+
+  dig({ face = "front" }?: { face?: Face }): Result<void>;
 }
 
-export class InventoryImpl implements Inventory {
+export class BotImpl implements Bot {
   public selectedIdx: number = turtle.getSelectedSlot() - 1;
   private slots: InventorySlot[] = slotIndexes.map(
     (slot) => new InventorySlot(this, slot)
   );
+
+  private _fuel: number | "?" = "?";
+  protected get fuel(): number {
+    if (this._fuel === "?") {
+      this._fuel = turtle.getFuelLevel();
+    }
+    return this._fuel;
+  }
+  protected set fuel(value: number) {
+    this._fuel = value;
+  }
 
   private get selected(): InventorySlot {
     return this.slots[this.selectedIdx];
@@ -397,9 +443,50 @@ export class InventoryImpl implements Inventory {
     return ok(undefined);
   }
 
+  refuel({
+    amount = "all",
+  }: {
+    amount?: Record<ItemName, number> | "all";
+  } = {}): Result<void> {
+    if (amount === "all") {
+      this.slots.forEach((slot) => slot.refuel().assert());
+      this._fuel = "?";
+      return ok(undefined);
+    }
+
+    const remaining: Record<ItemName, number> = { ...amount };
+    const toRefuel: Array<[InventorySlot, number]> = [];
+    for (const slot of this.slots) {
+      if (slot.name !== null) {
+        const maxRefuel = remaining[slot.name] ?? 0;
+        const refuelAmount = Math.min(slot.count, maxRefuel);
+        if (refuelAmount > 0) {
+          toRefuel.push([slot, refuelAmount]);
+          remaining[slot.name] -= refuelAmount;
+
+          if (remaining[slot.name] === 0) {
+            delete remaining[slot.name];
+          }
+        }
+      }
+    }
+
+    const notEnoughOf = Object.keys(remaining);
+    if (notEnoughOf.length > 0) {
+      return err("Not enough " + notEnoughOf.join());
+    }
+
+    toRefuel.forEach(([slot, amount]) => {
+      slot.refuel({ amount }).assert();
+    });
+    this._fuel = "?";
+
+    return ok(undefined);
+  }
+
   private equipment: Equipment | null | "?" = "?";
 
-  public ensureEquipped(item: Equipment): Result<void> {
+  private ensureEquipped(item: Equipment): Result<void> {
     // Already equipped
     if (this.equipment === item) {
       return ok(undefined);

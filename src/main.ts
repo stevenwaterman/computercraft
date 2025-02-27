@@ -6,6 +6,7 @@ import bob from "./building/bob";
 import sorty from "./goldFarm/sorty";
 import slicer from "./combat/slicer";
 import spinSlice from "./combat/spinSlice";
+import forester from "./lumberjack/forester";
 
 const actions: Record<string, () => void> = {
   cobblebot,
@@ -15,6 +16,7 @@ const actions: Record<string, () => void> = {
   sorty,
   slicer,
   spinSlice,
+  forester,
 };
 
 const label = os.getComputerLabel();

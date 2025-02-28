@@ -1,11 +1,9 @@
 import { BotImpl } from "./Bot";
-import * as event from "../event";
 import { Result, err, ok } from "./Result";
 import { BlockName, WorldModel } from "./WorldModel";
-import { Face, ItemName } from "./types";
-import { pretty_print } from "cc.pretty";
+import { Direction, Face, Heading, ItemName, RelativeHeading, addHeading, rotateHeading, rotationsBetween } from "./types";
+import { planPath } from "./Pathfinding";
 
-type RelativeHeading = 0 | 1 | 2 | 3;
 type MovementLog = {
   rotation: RelativeHeading;
   forward: number;
@@ -14,7 +12,7 @@ type MovementLog = {
 
 export class MovingBot extends BotImpl {
   private readonly initialLocation: Vector = getLocationFromGps();
-  private readonly worldModel: WorldModel = new WorldModel(
+  public readonly worldModel: WorldModel = new WorldModel(
     this.initialLocation
   );
 
@@ -251,6 +249,28 @@ export class MovingBot extends BotImpl {
     return ok(undefined);
   }
 
+  public goTo(location: Vector): Result<void> {
+    while (true) {
+      const plannedPath = planPath({
+        fromLocation: this.location,
+        fromHeading: this.heading.assert(),
+        toLocation: location,
+        worldModel: this.worldModel,
+      });
+
+      if (plannedPath === null) {
+        return err("Cannot pathfind there");
+      }
+
+      const result = this.moveMany(...plannedPath);
+      if (result.ok) {
+        return result;
+      } else if (result.error !== "Movement obstructed") {
+        print(result.error);
+      }
+    }
+  }
+
   public dig({ face = "front" }: { face?: Face } = {}) {
     const result = super.dig({ face });
 
@@ -265,7 +285,7 @@ export class MovingBot extends BotImpl {
     if (face === "up") {
       return ok(this.location.add(new Vector(0, 1, 0)));
     } else if (face === "down") {
-      return ok(this.location.sub(new Vector(0, 1, 0)));
+      return ok(this.location.add(new Vector(0, -1, 0)));
     } else if (face === "front") {
       return this.heading.map((heading) => addHeading(this.location, heading));
     } else if (face === "back") {
@@ -335,43 +355,3 @@ function getLocationFromGps(): Vector {
 }
 
 type Movement = Direction | [Direction, number];
-type Heading = "+X" | "-X" | "+Z" | "-Z";
-type Direction = Heading | "+Y" | "-Y";
-
-function addHeading(location: Vector, heading: Heading): Vector {
-  if (heading === "+X") {
-    return location.add(new Vector(1, 0, 0));
-  }
-
-  if (heading === "-X") {
-    return location.sub(new Vector(1, 0, 0));
-  }
-
-  if (heading === "+Z") {
-    return location.add(new Vector(0, 0, 1));
-  }
-
-  if (heading === "-Z") {
-    return location.sub(new Vector(0, 0, -1));
-  }
-
-  const allHandled: never = heading;
-  throw "impossible";
-}
-
-function rotateHeading(heading: Heading, clockwise90: number): Heading {
-  const headings: Heading[] = ["-Z", "+X", "+Z", "-X"];
-  const initial = headings.indexOf(heading);
-  const rotated = initial + clockwise90;
-  const bounded = ((rotated % 4) + 4) % 4;
-  return headings[bounded];
-}
-
-function rotationsBetween(current: Heading, target: Heading): RelativeHeading {
-  const headings: Heading[] = ["-Z", "+X", "+Z", "-X"];
-  const currentRelative = headings.indexOf(current);
-  const targetRelative = headings.indexOf(target);
-  const rotationNeeded = targetRelative - currentRelative;
-  const bounded = ((rotationNeeded % 4) + 4) % 4;
-  return bounded as 0 | 1 | 2 | 3;
-}

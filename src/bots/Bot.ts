@@ -191,6 +191,7 @@ class InventorySlot {
       return err(reason!);
     }
 
+    // TODO lava bucket
     if (amount === "all" || (this._count !== "?" && this._count <= amount)) {
       this.count = 0;
     } else if (this._count !== "?") {

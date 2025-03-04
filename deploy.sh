@@ -1,2 +1,2 @@
-for i in {0..5}; do mkdir -p "/home/steven/.local/share/atlauncher/instances/ComputerCraft/saves/ComputerCraft/computercraft/computer/${i}/" && cp main.lua "/home/steven/.local/share/atlauncher/instances/ComputerCraft/saves/ComputerCraft/computercraft/computer/${i}/main.lua"; done
+for i in {0..100}; do mkdir -p "/home/steven/.local/share/atlauncher/instances/ComputerCraft/saves/ComputerCraft/computercraft/computer/${i}/" && cp main.lua "/home/steven/.local/share/atlauncher/instances/ComputerCraft/saves/ComputerCraft/computercraft/computer/${i}/main.lua"; done
 echo "done" 

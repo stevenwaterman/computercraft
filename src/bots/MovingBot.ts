@@ -1,7 +1,16 @@
 import { BotImpl } from "./Bot";
 import { Result, err, ok } from "./Result";
 import { BlockName, WorldModel } from "./WorldModel";
-import { Direction, Face, Heading, ItemName, RelativeHeading, addHeading, rotateHeading, rotationsBetween } from "./types";
+import {
+  Direction,
+  Face,
+  Heading,
+  ItemName,
+  RelativeHeading,
+  addHeading,
+  rotateHeading,
+  rotationsBetween,
+} from "./types";
 import { planPath } from "./Pathfinding";
 
 type MovementLog = {
@@ -12,9 +21,7 @@ type MovementLog = {
 
 export class MovingBot extends BotImpl {
   private readonly initialLocation: Vector = getLocationFromGps();
-  public readonly worldModel: WorldModel = new WorldModel(
-    this.initialLocation
-  );
+  public readonly worldModel: WorldModel = new WorldModel(this.initialLocation);
 
   private _heading: Heading | MovementLog = {
     rotation: 0,
@@ -274,8 +281,18 @@ export class MovingBot extends BotImpl {
   public dig({ face = "front" }: { face?: Face } = {}) {
     const result = super.dig({ face });
 
-    result.and(this.locationOnFace(face)).map(([_, dugLocation]) => {
+    result.and(this.locationOnFace(face)).ifOk(([_, dugLocation]) => {
       this.worldModel.clear(dugLocation);
+    });
+
+    return result;
+  }
+
+  public place({ face = "front", item }: { face?: Face; item: ItemName }) {
+    const result = super.place({ face, item });
+
+    result.and(this.locationOnFace(face)).ifOk(([_, placedLocation]) => {
+      this.worldModel.set(placedLocation, item);
     });
 
     return result;

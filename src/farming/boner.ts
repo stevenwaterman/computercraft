@@ -59,7 +59,7 @@ function emptyInvent() {
 
 export default function harvestForever() {
   while (true) {
-    growAndHarvestOnce();
     resetInventory();
+    growAndHarvestOnce();
   }
 }

@@ -12,7 +12,7 @@ import {
 const saplingSlot = 1;
 const bonemealSlot = 2;
 
-const maxDistance = 1;
+const maxDistance = 2;
 
 type Heading = "N" | "E" | "S" | "W";
 type Movement = Heading | "U" | "D";
@@ -187,7 +187,13 @@ function maybeRecurse(
     (block === "leaf" && state.distanceFromLog < maxDistance)
   ) {
     print("Going", movement);
-    a_dig(direction);
+    
+    const [success, error] = {
+      F: turtle.dig,
+      U: turtle.digUp,
+      D: turtle.digDown,
+    }[direction]();
+
     a_move(direction);
     return chopRecursive(cleared, {
       location: newLocation,

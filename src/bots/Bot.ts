@@ -1,3 +1,4 @@
+import { pretty, pretty_print } from "cc.pretty";
 import * as event from "../event";
 import { Result, err, ok } from "./Result";
 import { Face, ItemName, SlotIdx, slotIndexes } from "./types";
@@ -30,6 +31,12 @@ const digFunc = {
   front: turtle.dig,
   up: turtle.digUp,
   down: turtle.digDown,
+};
+
+const placeFunc = {
+  front: turtle.place,
+  up: turtle.placeUp,
+  down: turtle.placeDown,
 };
 
 class InventorySlot {
@@ -173,6 +180,18 @@ class InventorySlot {
     return ok(undefined);
   }
 
+  public place({ face = "front" }: { face?: Face }): Result<void> {
+    this.select();
+    const [success, reason] = placeFunc[face]();
+    this.count--;
+
+    if (!success) {
+      return err(reason!);
+    }
+
+    return ok(undefined);
+  }
+
   public refuel({
     amount = "all",
   }: {
@@ -208,6 +227,10 @@ class InventorySlot {
     target: InventorySlot;
     amount?: number | "all";
   }): Result<number> {
+    if (amount === 0) {
+      return ok(0);
+    }
+
     const itemName = this.name;
 
     if (!target.empty && target.name !== itemName) {
@@ -272,6 +295,14 @@ export interface Bot {
   }): Result<void>;
 
   dig({ face = "front" }?: { face?: Face }): Result<void>;
+
+  place({
+    face = "front",
+    item,
+  }: {
+    face?: Face;
+    item: ItemName;
+  }): Result<void>;
 }
 
 export class BotImpl implements Bot {
@@ -384,7 +415,7 @@ export class BotImpl implements Bot {
       return err(reason!);
     }
 
-    this.slots.forEach((slot) => slot.invalidateCount());
+    this.slots.forEach((slot) => slot.invalidate());
     return ok(undefined);
   }
 
@@ -408,22 +439,29 @@ export class BotImpl implements Bot {
     amount = "all",
   }: {
     face?: Face;
-    amount?: Record<ItemName, number> | "all";
+    amount?: Record<ItemName, number | "all"> | "all";
   } = {}): Result<void> {
     if (amount === "all") {
       this.slots.forEach((slot) => slot.drop({ face }).assert());
       return ok(undefined);
     }
 
-    const remaining: Record<ItemName, number> = { ...amount };
+    const remaining: Record<ItemName, number | "all"> = { ...amount };
     const toDrop: Array<[InventorySlot, number]> = [];
+
     for (const slot of this.slots) {
       if (slot.name !== null) {
         const maxDrop = remaining[slot.name] ?? 0;
-        const dropAmount = Math.min(slot.count, maxDrop);
+        const dropAmount =
+          maxDrop === "all" ? slot.count : Math.min(slot.count, maxDrop);
+
         if (dropAmount > 0) {
           toDrop.push([slot, dropAmount]);
-          remaining[slot.name] -= dropAmount;
+
+          const oldRemaining = remaining[slot.name];
+          if (oldRemaining !== "all") {
+            remaining[slot.name] = oldRemaining - dropAmount;
+          }
 
           if (remaining[slot.name] === 0) {
             delete remaining[slot.name];
@@ -432,9 +470,11 @@ export class BotImpl implements Bot {
       }
     }
 
-    const notEnoughOf = Object.keys(remaining);
-    if (notEnoughOf.length > 0) {
-      return err("Not enough " + notEnoughOf.join());
+    const notEnoughItems = Object.values(remaining).some(
+      (count) => count !== "all"
+    );
+    if (notEnoughItems) {
+      return err("Not enough items");
     }
 
     toDrop.forEach(([slot, amount]) => {
@@ -442,6 +482,22 @@ export class BotImpl implements Bot {
     });
 
     return ok(undefined);
+  }
+
+  place({
+    face = "front",
+    item,
+  }: {
+    face?: Face;
+    item: ItemName;
+  }): Result<void> {
+    const slot = this.slots.find((slot) => slot.name === item);
+
+    if (slot === undefined) {
+      return err("Item not found");
+    }
+
+    return slot.place({ face });
   }
 
   refuel({
@@ -602,6 +658,240 @@ export class BotImpl implements Bot {
     }
     return ok(undefined);
   }
+
+  public craft({
+    recipe,
+    amount = "all",
+  }: {
+    recipe: CraftingRecipe;
+    amount?: number | "all";
+  }): Result<number> {
+    this.ensureEquipped("minecraft:crafting_table");
+
+    const recipeItems: ItemName[] = Object.values(recipe);
+    const recipeRatio: Record<ItemName, number> = {};
+    for (const item of recipeItems) {
+      const currentAmount = recipeRatio[item] ?? 0;
+      recipeRatio[item] = currentAmount + 1;
+    }
+
+    const inventoryItems: Record<ItemName, number> = this.items;
+
+    for (const item of Object.keys(inventoryItems) as ItemName[]) {
+      // Every item in the inventory is used
+      if (recipeRatio[item] === undefined) {
+        return err("Extra item in inventory");
+      }
+    }
+
+    for (const item of recipeItems) {
+      // Inventory has all required items
+      if (inventoryItems[item] === undefined) {
+        return err("Missing ingredient");
+      }
+    }
+
+    // We know the inventory has all ingredients and nothing else
+
+    const maxStackSizes: Record<ItemName, number> = {};
+    this.slots
+      .filter((slot) => !slot.empty)
+      .forEach((slot) => (maxStackSizes[slot.name!] = slot.maxStackSize!));
+
+    for (const item of Object.keys(inventoryItems) as ItemName[]) {
+      const ratio = recipeRatio[item];
+      const itemCount = inventoryItems[item];
+
+      if (
+        (amount === "all" && itemCount < ratio) ||
+        (amount !== "all" && itemCount < ratio * amount)
+      ) {
+        return err("Not enough ingredients");
+      }
+
+      const stacks = itemCount / maxStackSizes[item];
+      if (stacks > ratio) {
+        return err("Too much stuff");
+      }
+    }
+
+    // If all 16 slots are full, defragment so there's an empty space to work with
+    if (this.slots.every((slot) => !slot.empty)) {
+      this.defragment();
+    }
+
+    const target: Array<[SlotIdx, ItemName | "X", number]> = [];
+    for (const recipeSlot of recipeSlots) {
+      const item = recipe[recipeSlot];
+      const slotIdx = recipeSlotsMapping[recipeSlot];
+      if (item === undefined) {
+        target.push([slotIdx, "X", 0]);
+      } else {
+        const inventoryAmount = inventoryItems[item];
+        const ratio = recipeRatio[item];
+
+        // 10 items in 3 slots, modulo is 1
+        // 1 slot should be rounded up, the rest should be rounded down
+        const extraAmount = inventoryAmount % ratio;
+        const itemIdx = target.filter((t) => t[1] === item).length;
+        const shouldRoundUp = itemIdx < extraAmount;
+
+        const amount = inventoryAmount / ratio;
+        const roundedAmount = shouldRoundUp
+          ? Math.ceil(amount)
+          : Math.floor(amount);
+        target.push([slotIdx, item, roundedAmount]);
+      }
+    }
+
+    // Sort with empty slots last
+    target.sort((a, b) => b[2] - a[2]);
+
+    const frozenSlots: Set<InventorySlot> = new Set();
+    for (const [slotIdx, targetItem, targetAmount] of target) {
+      const slot = this.slots[slotIdx];
+      frozenSlots.add(slot);
+
+      // If the slot has the wrong thing in
+      if (!slot.empty && (targetItem === "X" || slot.name !== targetItem)) {
+        // List of other slots containing the same item, sorted from most space - least space
+        const otherSlots = this.slots
+          .filter(
+            (other) => !frozenSlots.has(other) && other.name === targetItem
+          )
+          .toSorted((a, b) => b.space! - a.space!);
+
+        // For each of those destination slots, try and empty it out
+        for (const other of otherSlots) {
+          slot.transferTo({ target: other }).assert();
+          if (slot.empty) {
+            break;
+          }
+        }
+
+        // If there's still too much, put the excess in an empty slot
+        const emptySlot = this.slots.find(
+          (other) => !frozenSlots.has(other) && other.empty
+        );
+        if (emptySlot === undefined) {
+          return err("No empty slots");
+        }
+        slot.transferTo({ target: emptySlot }).assert();
+      }
+
+      // If the slot has the right thing but too much
+      if (slot.count > targetAmount) {
+        // List slots we can take from, sorted from most - least space
+        const otherSlots = this.slots
+          .filter(
+            (other) => !frozenSlots.has(other) && other.name === targetItem
+          )
+          .toSorted((a, b) => b.space! - a.space!);
+
+        // For each of those destination slots, try and empty it out
+        for (const other of otherSlots) {
+          const amountToShed = slot.count - targetAmount;
+          const space = other.space!;
+          const transferAmount = Math.min(amountToShed, space);
+          slot.transferTo({ target: other, amount: transferAmount }).assert();
+          if (slot.empty) {
+            break;
+          }
+        }
+
+        // If there's still too much, put the excess in an empty slot
+        const emptySlot = this.slots.find(
+          (other) => !frozenSlots.has(other) && other.empty
+        );
+        if (emptySlot === undefined) {
+          return err("No empty slots");
+        }
+        slot.transferTo({ target: emptySlot }).assert();
+      }
+
+      // If the slot needs more
+      if (slot.count < targetAmount) {
+        // List of other slots containing the same item, sorted from most - least amount
+        const otherSlots = this.slots
+          .filter(
+            (other) => !frozenSlots.has(other) && other.name === targetItem
+          )
+          .toSorted((a, b) => b.count - a.count);
+
+        for (const other of otherSlots) {
+          const amountRequired = targetAmount - slot.count;
+          const amountAvailable = other.count;
+          const transferAmount = Math.min(amountRequired, amountAvailable);
+
+          other.transferTo({ target: slot, amount: transferAmount }).assert();
+          if (slot.count === targetAmount) {
+            break;
+          }
+        }
+
+        if (slot.count !== targetAmount) {
+          return err("Couldn't fill slot for some reason");
+        }
+      }
+    }
+
+    const craftAmount =
+      amount === "all"
+        ? Math.min(
+            ...this.slots.map((slot) => slot.count).filter((count) => count > 0)
+          )
+        : amount;
+    const [success, reason] = turtle.craft(craftAmount);
+    if (!success) {
+      return err(reason);
+    }
+
+    this.slots.forEach((slot) => {
+      if (slot.count > craftAmount) {
+        slot.invalidateCount();
+      } else {
+        slot.invalidate();
+      }
+    });
+
+    return ok(craftAmount);
+  }
 }
+
+const recipeSlotsMapping: Record<RecipeSlot, SlotIdx> = {
+  topLeft: 0,
+  topMiddle: 1,
+  topRight: 2,
+  middleLeft: 4,
+  middleMiddle: 5,
+  middleRight: 6,
+  bottomLeft: 8,
+  bottomMiddle: 9,
+  bottomRight: 10,
+};
+
+type RecipeSlot = keyof CraftingRecipe;
+const recipeSlots: RecipeSlot[] = [
+  "topLeft",
+  "topMiddle",
+  "topRight",
+  "middleLeft",
+  "middleMiddle",
+  "middleRight",
+  "bottomLeft",
+  "bottomMiddle",
+  "bottomRight",
+];
+type CraftingRecipe = {
+  topLeft?: ItemName;
+  topMiddle?: ItemName;
+  topRight?: ItemName;
+  middleLeft?: ItemName;
+  middleMiddle?: ItemName;
+  middleRight?: ItemName;
+  bottomLeft?: ItemName;
+  bottomMiddle?: ItemName;
+  bottomRight?: ItemName;
+};
 
 type Equipment = "minecraft:crafting_table" | "minecraft:diamond_pickaxe";
